@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  mm-det:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: mm-det:latest
+    container_name: mm-det-container
+    volumes:
+      # Mount data directories
+      - ./data:/app/data
+      - ./weights:/app/weights
+      - ./expts:/app/expts
+      # Mount output directories
+      - ./outputs:/app/outputs
+    environment:
+      - CUDA_VISIBLE_DEVICES=""
+      - PYTHONUNBUFFERED=1
+    stdin_open: true
+    tty: true
+    command: /bin/bash

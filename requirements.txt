@@ -1,0 +1,48 @@
+# Core dependencies
+numpy==1.26.3
+pillow==10.2.0
+opencv-python==4.9.0.80
+scikit-learn==1.2.2
+scikit-image==0.24.0
+scipy==1.13.0
+tqdm==4.67.1
+
+# Deep Learning
+# torch, torchvision, torchaudio are installed separately in Dockerfile
+
+# Transformers and LLaVA
+transformers==4.37.2
+accelerate==0.21.0
+tokenizers==0.15.1
+sentencepiece==0.1.99
+protobuf==6.33.0
+safetensors==0.6.2
+peft==0.10.0
+
+# LLaVA (install from git)
+llava==1.2.2.post1
+
+# Vision models
+timm==0.9.16
+einops==0.6.1
+einops-exts==0.0.4
+
+# Utilities
+huggingface-hub==0.35.3
+pydantic==2.7.1
+PyYAML==6.0.3
+regex==2025.10.23
+requests==2.32.5
+filelock==3.20.0
+fsspec==2025.9.0
+packaging==25.0
+
+# Visualization and logging
+tensorboardX==2.6.2.2
+imageio==2.37.0
+
+# Other dependencies
+markdown2==2.5.4
+shortuuid==1.0.13
+psutil==7.1.1
+joblib==1.5.2
