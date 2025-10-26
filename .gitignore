@@ -1,0 +1,129 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environment
+venv/
+env/
+ENV/
+.venv
+
+# PyTorch
+*.pth
+*.pt
+*.ckpt
+*.safetensors
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+nul
+
+# Data directories
+data/DVF_tiny/
+data/DVF_recons_tiny/
+data/mm_representations_tiny/
+data/custom_recons/
+data/my_test_video/
+data/my_test_recons/
+data/my_test_mm_representations/
+original_videos/
+test_data/
+
+# Large model files
+weights/*.pth
+weights/clip-vit-large-patch14-336/
+weights/ViT/
+
+# HuggingFace cache
+.cache/
+huggingface/
+
+# Experiment outputs
+expts/
+outputs/
+logs/
+runs/
+results/
+
+# Temporary files
+*.log
+*.tmp
+*.temp
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Video files
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.flv
+*.wmv
+
+# Image files (large datasets)
+# Uncomment if you don't want to track images
+# *.jpg
+# *.jpeg
+# *.png
+# *.gif
+# *.bmp
+
+# Compressed files
+*.zip
+*.tar
+*.tar.gz
+*.rar
+*.7z
+
+# Docker (optional - comment out if you want to track)
+# .dockerignore
+
+# Package files
+requirements_full.txt
+*.whl
+
+# Generated files
+docker-build-guide.md
+
+# Keep these config files
+!weights/config.json
+!weights/preprocessor_config.json

@@ -1,0 +1,49 @@
+# Git files
+.git
+.gitignore
+.gitattributes
+
+# Python cache
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Large data files (mount as volumes instead)
+data/DVF_tiny/
+data/mm_representations_tiny/
+original_videos/
+
+# Temporary files
+*.log
+*.tmp
+nul
+
+# Output directories (mount as volumes)
+outputs/
+expts/
+
+# Model checkpoints (mount as volumes)
+weights/*.pth
+weights/clip-vit-large-patch14-336/
+
+# Video files
+*.mp4
+*.avi
+*.mov
