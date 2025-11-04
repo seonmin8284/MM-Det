@@ -25,9 +25,12 @@ MANIFEST
 
 # Virtual Environment
 venv/
+venv_cu126/
 env/
 ENV/
 .venv
+env.bak/
+venv.bak/
 
 # PyTorch
 *.pth
@@ -37,7 +40,7 @@ ENV/
 
 # Jupyter Notebook
 .ipynb_checkpoints
-*.ipynb
+*.ipynb_checkpoints
 
 # IDE
 .vscode/
@@ -45,6 +48,9 @@ ENV/
 *.swp
 *.swo
 *~
+.project
+.pydevproject
+.settings/
 
 # OS
 .DS_Store
@@ -69,6 +75,8 @@ test_data/
 
 # Large model files
 weights/*.pth
+weights/*.pt
+weights/*.ckpt
 weights/clip-vit-large-patch14-336/
 weights/ViT/
 
@@ -84,12 +92,16 @@ runs/
 results/
 
 # Temporary files
+tmp/
 *.log
 *.tmp
 *.temp
 .pytest_cache/
 .coverage
 htmlcov/
+.mypy_cache/
+.dmypy.json
+dmypy.json
 
 # Video files
 *.mp4
@@ -98,6 +110,7 @@ htmlcov/
 *.mkv
 *.flv
 *.wmv
+*.webm
 
 # Image files (large datasets)
 # Uncomment if you don't want to track images
@@ -113,9 +126,7 @@ htmlcov/
 *.tar.gz
 *.rar
 *.7z
-
-# Docker (optional - comment out if you want to track)
-# .dockerignore
+aif.zip
 
 # Package files
 requirements_full.txt
@@ -127,3 +138,9 @@ docker-build-guide.md
 # Keep these config files
 !weights/config.json
 !weights/preprocessor_config.json
+
+# wandb
+wandb/
+
+# TensorBoard
+events.out.tfevents.*
