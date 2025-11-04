@@ -493,6 +493,668 @@ MMDet (Full Version)
 
 ---
 
+## 성능 향상 전략
+
+현재 MMDet_Simplified 모델의 성능을 더욱 개선하기 위한 체계적인 방법들을 소개합니다.
+
+### 1. 모델 아키텍처 개선
+
+#### 1.1 Full MM-Det 활용 (권장 ⭐)
+
+**현재 사용:** MMDet_Simplified (Backbone + Head만)  
+**업그레이드:** Full MM-Det (Multi-Modal Encoder 추가)
+
+```python
+# Full MM-Det으로 전환
+model = MMDet(config)  # MMDet_Simplified 대신
+
+# 장점:
+# - LLaVA 기반 시각-언어 추론 활용
+# - CLIP 비전 특징 (1024-dim) 추가
+# - 텍스트 기반 forgery 설명 생성 (4096-dim)
+# - Dynamic Fusion으로 cross-modal attention
+```
+
+**예상 성능 향상:**
+- Accuracy: +3~5%
+- 특히 복잡한 diffusion artifact 탐지에서 효과적
+- 단점: 추론 시간 증가 (~5-10배), VRAM 10GB+ 필요
+
+**구현 방법:**
+```python
+config = {
+    'lmm_ckpt': './weights/llava-7b-1.5-rfrd',
+    'lmm_base': None,
+    'load_8bit': False,
+    'load_4bit': False,
+    'conv_mode': 'llava_v1',
+    'new_tokens': 256,
+    'selected_layers': [-1],
+    'interval': 10,
+    'cache_mm': False,  # MM Encoder 활성화
+    # ... 기타 설정
+}
+model = MMDet(config)
+```
+
+#### 1.2 더 큰 Backbone 사용
+
+**현재:** `vit_base_r50_s16_224` (768-dim)  
+**업그레이드 옵션:**
+
+| 모델 | Params | Hidden Dim | 예상 성능 | VRAM |
+|------|--------|------------|-----------|------|
+| ViT-Base (현재) | 90M | 768 | Baseline | 4GB |
+| **ViT-Large** | 304M | 1024 | +2~4% | 8GB |
+| ViT-Huge | 632M | 1280 | +3~6% | 16GB+ |
+
+```python
+# ViT-Large로 변경
+from .vit.stv_transformer_hybrid import vit_large_r50_s16_224_with_recons_iafa
+
+self.backbone = vit_large_r50_s16_224_with_recons_iafa(
+    window_size=window_size,
+    pretrained=True
+)
+self.head = nn.Linear(1024, 2)  # 768 → 1024
+```
+
+#### 1.3 Ensemble 모델
+
+**여러 모델의 예측을 결합하여 성능 향상:**
+
+```python
+class EnsembleMMDet(nn.Module):
+    def __init__(self):
+        super().__init__()
+        # 다양한 설정의 모델들
+        self.model1 = MMDet_Simplified(window_size=10)
+        self.model2 = MMDet_Simplified(window_size=15)  # 더 긴 temporal window
+        self.model3 = MMDet(config)  # Full 버전
+        
+    def forward(self, x):
+        # Soft voting
+        out1 = F.softmax(self.model1(x), dim=1)
+        out2 = F.softmax(self.model2(x), dim=1)
+        out3 = F.softmax(self.model3(x), dim=1)
+        
+        # 가중 평균 (성능 기반 가중치)
+        ensemble_out = 0.3 * out1 + 0.3 * out2 + 0.4 * out3
+        return ensemble_out
+```
+
+**예상 성능 향상:** +2~3% (단, 추론 시간 3배 증가)
+
+---
+
+### 2. 데이터 전처리 개선
+
+#### 2.1 더 많은 프레임 사용
+
+**현재:** 10 프레임  
+**개선안:** 15~20 프레임 (더 풍부한 temporal 정보)
+
+```python
+# process_video_frames() 수정
+num_frames_to_extract = 20  # 10 → 20
+
+# 모델도 수정 필요
+model = MMDet_Simplified(window_size=20)
+```
+
+**Trade-off:**
+- 장점: 시간적 일관성 검증 강화 (+1~2% accuracy)
+- 단점: 추론 시간 2배, 메모리 2배
+
+#### 2.2 Multi-Scale 추론
+
+**다양한 해상도에서 추론 후 결합:**
+
+```python
+def multi_scale_inference(image, model):
+    scales = [224, 256, 288]
+    predictions = []
+    
+    for scale in scales:
+        # 각 스케일로 리사이즈
+        resized = transforms.Resize((scale, scale))(image)
+        # Center crop to 224x224
+        cropped = transforms.CenterCrop(224)(resized)
+        
+        # 추론
+        pred = model(cropped)
+        predictions.append(pred)
+    
+    # 평균
+    final_pred = torch.mean(torch.stack(predictions), dim=0)
+    return final_pred
+```
+
+**예상 성능 향상:** +1~2%
+
+#### 2.3 얼굴 검출 개선
+
+**현재 방식의 문제점:**
+- 얼굴이 검출되지 않으면 전체 이미지 사용
+- 측면/기울어진 얼굴 놓침
+
+**개선 방안:**
+
+```python
+# 1. 더 강력한 얼굴 검출 모델 사용
+# MTCNN, RetinaFace, YOLO-Face 등
+
+# 2. Multi-face 처리
+def detect_all_faces(image):
+    """모든 얼굴 검출 → 가장 큰 얼굴 선택"""
+    faces = detector.detect_multi(image)
+    if len(faces) == 0:
+        return None
+    # 가장 큰 얼굴 반환
+    largest_face = max(faces, key=lambda f: f.area)
+    return crop_face(image, largest_face)
+
+# 3. Face alignment 추가
+def align_face(face_image):
+    """얼굴 랜드마크 기반 정렬"""
+    landmarks = get_landmarks(face_image)
+    aligned = affine_transform(face_image, landmarks)
+    return aligned
+```
+
+**예상 성능 향상:** +2~3% (특히 다양한 각도의 얼굴에서)
+
+#### 2.4 데이터 증강 (학습 시)
+
+**학습 시 적용할 augmentation:**
+
+```python
+train_transform = transforms.Compose([
+    # 기하학적 변환
+    transforms.RandomResizedCrop(224, scale=(0.8, 1.0)),
+    transforms.RandomHorizontalFlip(p=0.5),
+    transforms.RandomRotation(degrees=15),
+    
+    # 색상 변환
+    transforms.ColorJitter(
+        brightness=0.2,
+        contrast=0.2,
+        saturation=0.2,
+        hue=0.1
+    ),
+    
+    # Diffusion artifact 강조
+    transforms.GaussianBlur(kernel_size=3, sigma=(0.1, 2.0)),
+    
+    # 정규화
+    transforms.ToTensor(),
+    transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
+    
+    # CutOut / Random Erasing
+    transforms.RandomErasing(p=0.2),
+])
+```
+
+**예상 성능 향상:** +3~5% (학습 데이터가 제한적일 때 효과적)
+
+---
+
+### 3. 학습 전략 최적화
+
+#### 3.1 학습률 스케줄링
+
+**현재 문제:** 고정 학습률 사용 시 최적점 근처에서 진동
+
+**개선 방안:**
+
+```python
+# Cosine Annealing with Warm Restarts
+scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+    optimizer,
+    T_0=10,      # 첫 restart까지 epoch 수
+    T_mult=2,    # restart 주기 증가 배수
+    eta_min=1e-6 # 최소 학습률
+)
+
+# 또는 ReduceLROnPlateau
+scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+    optimizer,
+    mode='max',
+    factor=0.5,
+    patience=5,
+    verbose=True
+)
+```
+
+#### 3.2 Loss Function 개선
+
+**현재:** Cross Entropy Loss (단순 분류)
+
+**개선 옵션:**
+
+```python
+# 1. Focal Loss (hard example에 집중)
+class FocalLoss(nn.Module):
+    def __init__(self, alpha=0.25, gamma=2.0):
+        super().__init__()
+        self.alpha = alpha
+        self.gamma = gamma
+    
+    def forward(self, inputs, targets):
+        ce_loss = F.cross_entropy(inputs, targets, reduction='none')
+        pt = torch.exp(-ce_loss)
+        focal_loss = self.alpha * (1-pt)**self.gamma * ce_loss
+        return focal_loss.mean()
+
+# 2. Label Smoothing (과적합 방지)
+criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
+
+# 3. ArcFace Loss (feature discrimination 강화)
+class ArcFaceLoss(nn.Module):
+    def __init__(self, in_features, out_features, s=30.0, m=0.50):
+        super().__init__()
+        self.weight = nn.Parameter(torch.FloatTensor(out_features, in_features))
+        self.s = s
+        self.m = m
+        nn.init.xavier_uniform_(self.weight)
+    
+    def forward(self, features, labels):
+        # Cosine similarity
+        cosine = F.linear(F.normalize(features), F.normalize(self.weight))
+        # Add margin
+        theta = torch.acos(torch.clamp(cosine, -1.0 + 1e-7, 1.0 - 1e-7))
+        target_logits = torch.cos(theta + self.m)
+        # Apply
+        one_hot = F.one_hot(labels, num_classes=2)
+        output = (one_hot * target_logits) + ((1.0 - one_hot) * cosine)
+        output *= self.s
+        return F.cross_entropy(output, labels)
+```
+
+**예상 성능 향상:**
+- Focal Loss: +1~2% (클래스 불균형이 있을 때)
+- Label Smoothing: 과적합 감소, 일반화 성능 향상
+- ArcFace: +2~3% (feature space에서 더 명확한 분리)
+
+#### 3.3 Hard Negative Mining
+
+**어려운 샘플에 집중하여 학습:**
+
+```python
+def hard_negative_mining(model, dataloader, ratio=0.3):
+    """
+    가장 분류하기 어려운 샘플들을 선별
+    """
+    model.eval()
+    samples_with_loss = []
+    
+    with torch.no_grad():
+        for inputs, labels in dataloader:
+            outputs = model(inputs)
+            losses = F.cross_entropy(outputs, labels, reduction='none')
+            
+            for i, loss in enumerate(losses):
+                samples_with_loss.append((inputs[i], labels[i], loss.item()))
+    
+    # Loss 기준 내림차순 정렬
+    samples_with_loss.sort(key=lambda x: x[2], reverse=True)
+    
+    # 상위 ratio% 샘플만 선택
+    num_hard = int(len(samples_with_loss) * ratio)
+    hard_samples = samples_with_loss[:num_hard]
+    
+    return hard_samples
+
+# 학습 루프에서
+for epoch in range(num_epochs):
+    # 일반 학습
+    train_epoch(model, train_loader)
+    
+    # Hard negative mining (3 epoch마다)
+    if epoch % 3 == 0:
+        hard_samples = hard_negative_mining(model, train_loader)
+        train_on_hard_samples(model, hard_samples)
+```
+
+**예상 성능 향상:** +2~3%
+
+#### 3.4 Knowledge Distillation
+
+**큰 모델의 지식을 작은 모델로 전달:**
+
+```python
+# Teacher: Full MM-Det (큰 모델)
+teacher = MMDet(config)
+teacher.load_state_dict(torch.load('teacher_weights.pth'))
+teacher.eval()
+
+# Student: MMDet_Simplified (작은 모델)
+student = MMDet_Simplified()
+
+# Distillation Loss
+def distillation_loss(student_logits, teacher_logits, labels, temperature=3.0, alpha=0.5):
+    # Soft target loss
+    soft_loss = F.kl_div(
+        F.log_softmax(student_logits / temperature, dim=1),
+        F.softmax(teacher_logits / temperature, dim=1),
+        reduction='batchmean'
+    ) * (temperature ** 2)
+    
+    # Hard target loss
+    hard_loss = F.cross_entropy(student_logits, labels)
+    
+    # Combined loss
+    return alpha * soft_loss + (1 - alpha) * hard_loss
+
+# 학습
+for inputs, labels in train_loader:
+    with torch.no_grad():
+        teacher_logits = teacher(inputs)
+    
+    student_logits = student(inputs)
+    loss = distillation_loss(student_logits, teacher_logits, labels)
+    loss.backward()
+    optimizer.step()
+```
+
+**장점:**
+- Simplified 모델의 성능을 Full 모델 수준으로 근접
+- 추론 시에는 빠른 Student 모델만 사용
+- 예상 성능 향상: +2~4%
+
+---
+
+### 4. Test-Time 최적화
+
+#### 4.1 Test-Time Augmentation (TTA)
+
+**추론 시 데이터 증강을 적용하여 예측 안정성 향상:**
+
+```python
+def test_time_augmentation(model, image, num_augments=5):
+    """
+    여러 augmented 버전에 대해 추론 후 평균
+    """
+    predictions = []
+    
+    # Original
+    pred = model(image)
+    predictions.append(pred)
+    
+    # Horizontal flip
+    pred_flip = model(transforms.functional.hflip(image))
+    predictions.append(pred_flip)
+    
+    # Multi-scale
+    for scale in [0.9, 1.0, 1.1]:
+        h, w = int(224 * scale), int(224 * scale)
+        resized = transforms.functional.resize(image, (h, w))
+        cropped = transforms.functional.center_crop(resized, 224)
+        pred_scale = model(cropped)
+        predictions.append(pred_scale)
+    
+    # 평균 (Soft voting)
+    final_pred = torch.mean(torch.stack(predictions), dim=0)
+    return final_pred
+```
+
+**예상 성능 향상:** +1~2% (약간의 추론 시간 증가)
+
+#### 4.2 Temporal Consistency Check (비디오)
+
+**연속된 프레임 간의 일관성 검증:**
+
+```python
+def temporal_consistency_check(model, video_frames, threshold=0.3):
+    """
+    프레임별 예측의 분산이 크면 재검토
+    """
+    frame_predictions = []
+    
+    # 각 프레임 개별 예측
+    for frame in video_frames:
+        pred = model(frame.unsqueeze(0))
+        prob_fake = F.softmax(pred, dim=1)[0, 1].item()
+        frame_predictions.append(prob_fake)
+    
+    # 분산 계산
+    variance = np.var(frame_predictions)
+    
+    if variance > threshold:
+        # 분산이 크면 → 더 많은 프레임 샘플링하여 재추론
+        more_frames = sample_more_frames(video, num_frames=20)
+        return model(more_frames)
+    else:
+        # 일관성 있으면 → 평균 사용
+        return np.mean(frame_predictions)
+```
+
+**예상 성능 향상:** +1~2% (비디오 데이터에서)
+
+#### 4.3 Confidence-based Filtering
+
+**낮은 confidence 샘플에 대해 재처리:**
+
+```python
+def confidence_based_inference(model, inputs, confidence_threshold=0.7):
+    """
+    Confidence가 낮으면 추가 처리
+    """
+    # 1차 추론
+    logits = model(inputs)
+    probs = F.softmax(logits, dim=1)
+    confidence = torch.max(probs, dim=1)[0].item()
+    prediction = torch.argmax(probs).item()
+    
+    if confidence < confidence_threshold:
+        # Low confidence → TTA 적용
+        tta_pred = test_time_augmentation(model, inputs)
+        tta_probs = F.softmax(tta_pred, dim=1)
+        prediction = torch.argmax(tta_probs).item()
+    
+    return prediction
+```
+
+---
+
+### 5. 시스템 레벨 최적화
+
+#### 5.1 배치 처리
+
+**현재:** 파일별 순차 처리 (batch_size=1)  
+**개선:** 배치 단위 처리
+
+```python
+def batch_inference(model, file_list, batch_size=8):
+    """
+    여러 파일을 배치로 묶어서 처리
+    """
+    results = []
+    dataloader = DataLoader(
+        dataset=DeepfakeDataset(file_list),
+        batch_size=batch_size,
+        num_workers=4,
+        pin_memory=True
+    )
+    
+    with torch.no_grad():
+        for batch_inputs, filenames in dataloader:
+            batch_inputs = batch_inputs.to(device)
+            outputs = model(batch_inputs)
+            predictions = torch.argmax(outputs, dim=1)
+            
+            for filename, pred in zip(filenames, predictions):
+                results.append((filename, pred.item()))
+    
+    return results
+```
+
+**성능 향상:**
+- 추론 속도: 2~4배 증가 (GPU 활용도 향상)
+- 정확도: 동일
+
+#### 5.2 Mixed Precision Inference
+
+**FP16 사용으로 메모리 및 속도 개선:**
+
+```python
+from torch.cuda.amp import autocast
+
+# 추론 시
+with torch.no_grad():
+    with autocast():  # FP16 사용
+        outputs = model(inputs)
+        predictions = torch.argmax(outputs, dim=1)
+```
+
+**성능 향상:**
+- 추론 속도: 1.5~2배 증가
+- 메모리: 50% 감소
+- 정확도: -0.1~0% (거의 영향 없음)
+
+#### 5.3 모델 경량화
+
+**ONNX 또는 TensorRT로 변환:**
+
+```python
+# PyTorch → ONNX
+dummy_input = torch.randn(1, 10, 3, 224, 224).to(device)
+torch.onnx.export(
+    model,
+    (dummy_input, dummy_input),
+    "mmdet_simplified.onnx",
+    input_names=['original', 'recons'],
+    output_names=['output'],
+    dynamic_axes={
+        'original': {0: 'batch_size'},
+        'recons': {0: 'batch_size'},
+        'output': {0: 'batch_size'}
+    }
+)
+
+# ONNX Runtime으로 추론
+import onnxruntime as ort
+session = ort.InferenceSession("mmdet_simplified.onnx")
+outputs = session.run(None, {
+    'original': inputs_numpy,
+    'recons': inputs_numpy
+})
+```
+
+**성능 향상:**
+- 추론 속도: 2~3배 증가
+- 정확도: 동일
+
+---
+
+### 6. 하이브리드 접근법 (권장 ⭐⭐⭐)
+
+**여러 전략을 조합한 최적 구성:**
+
+```python
+class OptimizedMMDet(nn.Module):
+    def __init__(self):
+        super().__init__()
+        # 1. 더 큰 backbone (ViT-Large)
+        self.backbone = vit_large_r50_s16_224_with_recons_iafa(
+            window_size=15,  # 10 → 15 프레임
+            pretrained=True
+        )
+        self.head = nn.Linear(1024, 2)
+    
+    def forward(self, x):
+        # Backbone features
+        features = self.backbone(x)
+        features = torch.mean(features, dim=1)
+        
+        # Classification
+        logits = self.head(features)
+        return logits
+
+# 학습 설정
+model = OptimizedMMDet()
+
+# Focal Loss + Label Smoothing
+criterion = FocalLoss(alpha=0.25, gamma=2.0)
+
+# AdamW optimizer with weight decay
+optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4, weight_decay=1e-4)
+
+# Cosine scheduler
+scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+    optimizer, T_0=10, T_mult=2
+)
+
+# 학습 시 데이터 증강
+train_loader = DataLoader(
+    dataset=DeepfakeDataset(
+        transform=get_strong_augmentation()
+    ),
+    batch_size=16,  # 배치 크기 증가
+    num_workers=8,
+    pin_memory=True
+)
+
+# 추론 시
+def optimized_inference(model, inputs):
+    # TTA 적용
+    preds = test_time_augmentation(model, inputs, num_augments=5)
+    
+    # Confidence check
+    confidence = torch.max(F.softmax(preds, dim=1)).item()
+    if confidence < 0.7:
+        # Low confidence → 더 많은 프레임 사용
+        inputs_extended = extend_frames(inputs, num_frames=20)
+        preds = model(inputs_extended)
+    
+    return torch.argmax(preds).item()
+```
+
+**예상 전체 성능 향상:** +5~10%
+
+**구현 우선순위:**
+1. **Full MM-Det 활용** (즉시 +3~5%)
+2. **ViT-Large backbone** (비교적 쉬움, +2~4%)
+3. **TTA + Ensemble** (추론 시 적용, +2~3%)
+4. **Better Loss Function** (학습 시, +1~2%)
+5. **데이터 증강** (학습 시, +3~5%)
+
+---
+
+### 7. 성능 벤치마크 비교
+
+| 방법 | 예상 Accuracy 향상 | 추론 시간 | 메모리 | 구현 난이도 |
+|------|-------------------|-----------|--------|------------|
+| **Baseline (현재)** | - | 1x | 4GB | - |
+| Full MM-Det | +3~5% | 8x | 14GB | 쉬움 |
+| ViT-Large | +2~4% | 2x | 8GB | 쉬움 |
+| Ensemble (3 models) | +2~3% | 3x | 12GB | 중간 |
+| TTA (5 augments) | +1~2% | 1.5x | 4GB | 쉬움 |
+| 더 많은 프레임 (20) | +1~2% | 2x | 8GB | 쉬움 |
+| Focal Loss | +1~2% | 1x | 4GB | 쉬움 |
+| Knowledge Distillation | +2~4% | 1x | 4GB | 중간 |
+| **Hybrid (추천)** | **+7~12%** | 3x | 10GB | 중간 |
+
+**최적 ROI (Return on Investment) 조합:**
+```
+Full MM-Det + TTA + Better Loss
+→ 예상 향상: +5~8%
+→ 추론 시간: ~10x
+→ 메모리: ~14GB
+→ 구현: 쉬움~중간
+```
+
+**빠른 배포용 조합 (속도 우선):**
+```
+ViT-Large + Focal Loss + Multi-scale input
+→ 예상 향상: +4~6%
+→ 추론 시간: ~2x
+→ 메모리: ~8GB
+→ 구현: 쉬움
+```
+
+---
+
 ## 참고 자료
 
 - **논문**: [On Learning Multi-Modal Forgery Representation for Diffusion Generated Video Detection (NeurIPS 2024)](https://arxiv.org/abs/2410.23623)
